@@ -1,0 +1,172 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Core user account for authentication
+model User {
+  id           Int       @id @default(autoincrement())
+  email        String    @unique
+  passwordHash String
+  isAdmin      Boolean   @default(false)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  
+  // Relationships
+  sessions     Session[]
+  identities   Identity[]
+  sharedIdentities SharedIdentity[]
+  identityRequests IdentityRequest[]
+  sharedLinks  SharedLink[]
+}
+
+model Session {
+  id        String   @id
+  userId    Int
+  expiresAt DateTime
+
+  user      User     @relation(references: [id], fields: [userId], onDelete: Cascade)
+}
+
+// Different identity personas/contexts a user can create
+model Identity {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  name        String   // e.g., "Professional", "Social", "Religious"
+  description String?
+  isDefault   Boolean  @default(false)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relationships
+  user        User     @relation(references: [id], fields: [userId], onDelete: Cascade)
+  attributes  IdentityAttribute[]
+  sharedWith  SharedIdentity[]
+  requests    IdentityRequest[]
+  sharedLinks SharedLink[]
+
+  @@unique([userId, name])
+}
+
+// Flexible attributes for each identity (name, pronouns, bio, etc.)
+model IdentityAttribute {
+  id         Int      @id @default(autoincrement())
+  identityId Int
+  key        String   // e.g., "displayName", "pronouns", "bio", "jobTitle"
+  value      String
+  isPublic   Boolean  @default(false)
+  isVisible  Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // Relationships
+  identity   Identity @relation(references: [id], fields: [identityId], onDelete: Cascade)
+
+  @@unique([identityId, key])
+}
+
+// Context-based sharing - which identities are shared with whom
+model SharedIdentity {
+  id         Int      @id @default(autoincrement())
+  ownerId    Int      // User who owns the identity
+  viewerId   Int      // User who can view the identity
+  identityId Int      // Which identity is shared
+  context    String   // e.g., "professional", "social", "dating", "family"
+  canView    Boolean  @default(true)
+  canRequest Boolean  @default(true)
+  sharedAt   DateTime @default(now())
+  expiresAt  DateTime?
+
+  // Relationships
+  owner      User     @relation(references: [id], fields: [ownerId], onDelete: Cascade)
+  identity   Identity @relation(references: [id], fields: [identityId], onDelete: Cascade)
+
+  @@unique([ownerId, viewerId, identityId, context])
+}
+
+// URL-based sharing links for identities
+model SharedLink {
+  id          String   @id @default(cuid())  // Use cuid for URL-safe unique IDs
+  ownerId     Int      // User who owns the identity
+  identityId  Int      // Which identity is shared
+  context     String   // Context of sharing
+  name        String?  // Optional name/description for the link
+  isActive    Boolean  @default(true)
+  expiresAt   DateTime?
+  accessLimit Int?     // Optional max number of accesses
+  accessCount Int      @default(0)
+  requireAuth Boolean  @default(false) // Whether viewer needs to be authenticated
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relationships
+  owner       User     @relation(references: [id], fields: [ownerId], onDelete: Cascade)
+  identity    Identity @relation(references: [id], fields: [identityId], onDelete: Cascade)
+  accesses    SharedLinkAccess[]
+
+  @@index([ownerId])
+  @@index([identityId])
+}
+
+// Track accesses to shared links
+model SharedLinkAccess {
+  id           Int        @id @default(autoincrement())
+  sharedLinkId String
+  viewerIp     String?    // Track IP for analytics/security
+  viewerAgent  String?    // User agent for analytics
+  accessedAt   DateTime   @default(now())
+
+  // Relationships
+  sharedLink   SharedLink @relation(references: [id], fields: [sharedLinkId], onDelete: Cascade)
+
+  @@index([sharedLinkId])
+}
+
+// Requests to view someone's identity in a specific context
+model IdentityRequest {
+  id         Int      @id @default(autoincrement())
+  requesterId Int     // User making the request
+  targetId   Int      // User being requested
+  identityId Int?     // Specific identity requested (optional)
+  context    String   // Context of the request
+  message    String?  // Optional message explaining the request
+  status     RequestStatus @default(PENDING)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  respondedAt DateTime?
+
+  // Relationships
+  requester  User     @relation(references: [id], fields: [requesterId], onDelete: Cascade)
+  identity   Identity? @relation(references: [id], fields: [identityId], onDelete: Cascade)
+
+  @@unique([requesterId, targetId, context])
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+// Predefined contexts that users can choose from
+model Context {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique // e.g., "professional", "social", "dating"
+  displayName String   // e.g., "Professional", "Social Media", "Dating Apps"
+  description String
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+}
